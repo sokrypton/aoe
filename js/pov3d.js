@@ -1341,10 +1341,37 @@ gl_Position = projectionMatrix * mvPosition;`;
     // (as finely cut as the cloth, so it bends with it)
     const side = (x0, x1) => { const b = pts.length / 3; for (let a = 0; a <= NY; a++) { const yy = -Hf * a / NY; pts.push(x0, yy, 0, x1, yy, 0); } for (let a = 0; a < NY; a++) { const q = b + 2 * a; idx.push(q, q + 1, q + 2, q + 1, q + 3, q + 2); } };
     strip(-m, L + m, m, 0, NX); strip(-m, L + m, -Hf, -Hf - m, NX); side(-m, 0); side(L, L + m);
-    const f = new THREE.Mesh(framed(geo, pts, idx, col), rigPlainMat(THREE.DoubleSide));
-    f.geometry.userData.rest = Float32Array.from(f.geometry.attributes.position.array);
+    const fg = framed(geo, pts, idx, col), n = fg.attributes.position.count, fk = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { fk[3 * i] = L; fk[3 * i + 1] = Hf; fk[3 * i + 2] = s; }
+    fg.setAttribute('flagK', new THREE.BufferAttribute(fk, 3));
+    const f = new THREE.Mesh(fg, flagMat());
     f.position.set(x, y0 + poleH - 0.01, z); f.rotation.y = -3 * Math.PI / 4;
-    f.name = 'flag'; f.userData.len = L; f.userData.hgt = Hf; f.userData.s = s; f.userData.phase = (x * 0.37 + z * 0.71) % (2 * Math.PI); g.add(f);   // (each flag its own phase: not all in step)
+    f.name = 'flag'; g.add(f);
+  }
+  // The flags' wave, in the vertex shader (the art's travelling wave, a ripple down its height too, the free corner
+  // hanging a touch lower, shaded as it folds: its normal from the same wave). flagK: the cloth's length, height and
+  // scale; its phase from where it stands in the world (each flag its own: not all in step — a shared model's too).
+  // Waved on the CPU and re-sent, every flag was its own geometry a building and a normals pass a frame.
+  let _flagMat = null;
+  function flagMat(){
+    if (_flagMat) return _flagMat;
+    const m = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+    m.onBeforeCompile = sh => { sh.uniforms.uWind = wind;
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute vec3 flagK; uniform float uWind;')
+        .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
+          vec4 flO = modelMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+          float flU = max(0.0, position.x / flagK.x), flV = max(0.0, -position.y / flagK.y), flS = flagK.z;
+          float flA = uWind * 0.13 + mod(flO.x * 0.37 + flO.z * 0.71, 6.2831853);
+          float flP = flA - flU * 4.2, flQ = flA * 0.63 - flU * 7.0, flR = flA * 1.4 - flU * 5.0 + flV * 2.4;
+          float flG = sin(flP) * 0.07 + sin(flQ) * 0.02 + sin(flR) * 0.012;
+          float flZ = flG * flU * flS;
+          float flDu = ((-4.2 * 0.07 * cos(flP) - 7.0 * 0.02 * cos(flQ) - 5.0 * 0.012 * cos(flR)) * flU + flG) * flS;
+          float flDv = 2.4 * 0.012 * cos(flR) * flU * flS;
+          objectNormal = normalize(vec3(-flDu / flagK.x, flDv / flagK.y, 1.0));`)
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+          transformed.z = flZ; transformed.y -= (0.05 * flU * flU + 0.012 * flU * flV) * flS;`); };
+    m.customProgramCacheKey = () => 'flag';
+    return (_flagMat = m);
   }
   // A flat cloth (geo, facing +z) and its black frame (pts, idx) as one geometry, the colour per vertex; geo is freed.
   function framed(geo, pts, idx, col){
@@ -1365,18 +1392,21 @@ gl_Position = projectionMatrix * mvPosition;`;
   const piece = g => { const p = new THREE.Group(); p.userData.piece = true; g.add(p); return p; };
   // A farm's crop — the standing sheaves and the stubble of the cut ones — as one mesh of its own: a sheaf cut
   // remakes this alone (refreshModel), not the field under it.
-  // A farm's crop: every sheaf (stalks, heads) and its stubble, built once; which show is set in place (cropSync) — a
-  // harvest stroke rebuilt the whole field, 10-20ms on a phone at every sheaf cut.
-  function farmCrop(e){
-    const w = e.w || 2, h = e.h || 2, fseed = e.x * 7 + e.y * 13, px = 1 / PX, K = ART_PROTO ? 5 : 3, N = FARM_CROP_ROWS.length * FARM_CROP_COLS;
-    const stalks = [], heads = [], stubs = [], xz = [];
+  // A farm's crop by its layout — its size and its seed mod 15 (every sheaf's jitter, lean and height is the seed mod 5
+  // or mod 3): one geometry for every farm of that layout, made at the origin. Which sheaves stand is the farm's mask,
+  // read by the wheat shader (uCrop: bit n, sheaf n standing; its stubble shows when it isn't) — no crop made a farm,
+  // none re-made or edited as it is cut. sheaf: a vertex's sheaf, + 64 on its stubble.
+  const cropGeos = new Map();
+  function cropGeo(w, h, f15){
+    const ck = w + 'x' + h + ':' + f15; let geo = cropGeos.get(ck); if (geo) return geo;
+    const px = 1 / PX, K = ART_PROTO ? 5 : 3, N = FARM_CROP_ROWS.length * FARM_CROP_COLS, stalks = [], heads = [], stubs = [], xz = [];
     const up = new THREE.Vector3(0, 1, 0);
     FARM_CROP_ROWS.forEach((t, ri) => {
       for (let i = 0; i < FARM_CROP_COLS; i++) {
         const n = ri * FARM_CROP_COLS + i;
-        const x = e.x + w * farmSheafU(ri, i) + (((n * 5 + fseed) % 5) - 2) * 0.5 * px, z = e.y + h * t + (((n * 11 + fseed) % 3) - 1) * px;
+        const x = w * farmSheafU(ri, i) + (((n * 5 + f15) % 5) - 2) * 0.5 * px, z = h * t + (((n * 11 + f15) % 3) - 1) * px;
         xz[n] = [x, z]; stubs.push([x, 0.03, z, 0.018, 0.06, 0.018]);
-        const lean = (((n * 13 + fseed) % 5) - 2) * 0.55 * px, H = (6 + (((n * 3 + fseed) % 3) - 1) * 0.7) / HPX;
+        const lean = (((n * 13 + f15) % 5) - 2) * 0.55 * px, H = (6 + (((n * 3 + f15) % 3) - 1) * 0.7) / HPX;
         for (const k of ART_PROTO ? [-2, -1, 0, 1, 2] : [-1, 0, 1]) { // splayed across the screen: world (1,0,-1)/√2 (prototype: a fuller sheaf)
           const hk = H * (ART_PROTO ? 1.4 : 1) * (k ? (Math.abs(k) > 1 ? 0.66 : 0.82) : 1), s = (k * (ART_PROTO ? 1.8 : 2.5) * px + lean) * Math.SQRT1_2;
           const dir = new THREE.Vector3(s, hk, -s), L = dir.length(), q = new THREE.Quaternion().setFromUnitVectors(up, dir.normalize());
@@ -1387,26 +1417,23 @@ gl_Position = projectionMatrix * mvPosition;`;
     });
     // (stalks, plain grain heads — no ink — and stubble, coloured per vertex: in that order, K boxes a sheaf, one stub)
     const sg = boxBatch(stalks, 'rod'), hg = boxBatch(heads, 'ball'), Pr = sg.attributes.position.count / (N * K), Pb = hg.attributes.position.count / (N * K);
-    const geo = tintJoin([[sg, '#c9a227'], [hg, '#e8c84a'], [boxBatch(stubs, 'rod'), '#9a7f4a']]);
-    geo.userData.crop = { N, K, Pr, Pb, xz, orig: geo.attributes.position.array.slice(), shown: new Array(N).fill(true), stub: new Array(N).fill(true) };
-    cropSync(e, geo);
-    return geo;
+    geo = tintJoin([[sg, '#c9a227'], [hg, '#e8c84a'], [boxBatch(stubs, 'rod'), '#9a7f4a']]);
+    const nv = geo.attributes.position.count, sh = new Float32Array(nv), at = new Float32Array(nv * 3);
+    for (let n = 0; n < N; n++) { sh.fill(n, n * K * Pr, (n + 1) * K * Pr); sh.fill(n, N * K * Pr + n * K * Pb, N * K * Pr + (n + 1) * K * Pb); sh.fill(n + 64, N * K * (Pr + Pb) + n * Pr, N * K * (Pr + Pb) + (n + 1) * Pr); }
+    for (let i = 0; i < nv; i++) { at[3 * i] = w / 2; at[3 * i + 1] = h / 2; at[3 * i + 2] = 2; }   // (levelled by its middle, in its own frame)
+    geo.setAttribute('sheaf', new THREE.BufferAttribute(sh, 1)); geo.setAttribute('hillAt', new THREE.BufferAttribute(at, 3));
+    geo.userData.own = false; geo.userData.xz = xz; cropGeos.set(ck, geo); return geo;
   }
-  // Show the sheaves standing now, stubble where they're cut (a hidden box: its vertices pinched to one point); a sheaf
-  // just cut falls away from the blade.
-  function cropSync(e, geo){
-    const C = geo.userData.crop, standing = farmStandingLive(e), prev = farmPrev.get(e.id), live = farmLive.get(e.id), P = geo.attributes.position, A = P.array, O = C.orig;
-    farmPrev.set(e.id, standing);
-    const put = (v0, n, show) => { const s = v0 * 3, e3 = (v0 + n) * 3; if (show) A.set(O.subarray(s, e3), s); else for (let i = s; i < e3; i += 3) { A[i] = O[s]; A[i + 1] = O[s + 1]; A[i + 2] = O[s + 2]; } };
-    let moved = false;
-    for (let n = 0; n < C.N; n++) {
-      const up = standing[n];
-      if (!up && prev && prev[n]) cutSheaf(C.xz[n][0], C.xz[n][1], live && live.away.has(n) ? live.away.get(n) : n * 2.39996);
-      if (C.shown[n] !== up) { C.shown[n] = up; moved = true;
-        put(n * C.K * C.Pr, C.K * C.Pr, up); put(C.N * C.K * C.Pr + n * C.K * C.Pb, C.K * C.Pb, up); }
-      if (C.stub[n] !== !up) { C.stub[n] = !up; moved = true; put(C.N * C.K * (C.Pr + C.Pb) + n * C.Pr, C.Pr, !up); }
-    }
-    if (moved) P.needsUpdate = true;
+  // The farm's standing sheaves as a mask (bit n: sheaf n standing)
+  function cropMask(e){ const st = farmStandingLive(e); let m = 0; for (let n = 0; n < st.length; n++) if (st[n]) m |= 1 << n; return m; }
+  // the mask goes up just before its crop is drawn: one wheat material for every farm (three re-sends its uniforms on the flag)
+  const cropU = { value: 0 };
+  function cropDraw(r, sc, cam, geo, m, grp){ THREE.Mesh.prototype.onBeforeRender.call(this, r, sc, cam, geo, m, grp); cropU.value = this.userData.cropMask; m.uniformsNeedUpdate = true; }
+  // A farm's crop changed: the sheaves just cut fall away from the blade
+  function cropCut(e, crop, mask){
+    const was = crop.userData.cropMask, live = farmLive.get(e.id), xz = crop.geometry.userData.xz;
+    for (let n = 0; n < xz.length; n++) if ((was >> n & 1) && !(mask >> n & 1)) cutSheaf(e.x + xz[n][0], e.y + xz[n][1], live && live.away.has(n) ? live.away.get(n) : n * 2.39996);
+    crop.userData.cropMask = mask;
   }
 
   // Which sides of a house stand hard against another house: [z0, z1, x0, x1] (thatchRoof's flush). Viewer-only.
@@ -1428,7 +1455,9 @@ gl_Position = projectionMatrix * mvPosition;`;
       if (e.id < 0 || typeof groundArt !== 'function') patch(g, dead ? '#7d6a52|soil' : '#7a5a38|soil', e.x, e.y, e.x + w, e.y + h);
       const ridges = FARM_CROP_ROWS.map(t => [e.x + w / 2, 0.004, e.y + h * t, w - 0.08, 0.008, 0.06]);
       g.add(new THREE.Mesh(boxBatch(ridges), mat(dead ? '#6f5d47' : '#6b4d2e')));
-      g.add(new THREE.Mesh(farmCrop(e), wheatMat()));
+      if (!e.complete || e.openTop) return;   // (a site: its soil and ridges, the crop sown when it's done; a damaged one's broken in parts: none — the crop's geometry is shared)
+      const crop = new THREE.Mesh(cropGeo(w, h, fseed % 15), wheatMat()); crop.position.set(e.x, 0, e.y); crop.name = 'crop';
+      crop.userData.cropMask = e.id < 0 ? -1 : cropMask(e); crop.onBeforeRender = cropDraw; g.add(crop);
     },
     // Cottage under a gable (drawGableBlock: W 32, hh 16, wall 16, roof 20). Dark: plank walls under a thick thatch and
     // the owner's ridge roll (every Dark building is thatched: THATCH); Feudal: plaster, half-timbering, the owner's
@@ -4206,7 +4235,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     for (const [r, col] of [[32, '#e2c046'], [19, '#f2ead8'], [9, '#c0392b']]) { c.fillStyle = col; c.beginPath(); c.arc(32, 32, r, 0, 2 * Math.PI); c.fill(); }
   });
   // A sheaf just cut: it tips over from its stubble, falls flat, and fades.
-  const farmPrev = new Map(), sheaves = [];
+  const sheaves = [];
   // A cut sheaf's shape, made once and shared (its own materials only: each fades on its own)
   let sheafGeo = null;
   function cutSheaf(x, z, away){
@@ -4236,9 +4265,11 @@ gl_Position = projectionMatrix * mvPosition;`;
     if (!m) {
       m = new THREE.MeshLambertMaterial({ vertexColors: true, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
       m.onBeforeCompile = sh => {
-        sh.uniforms.uPush = wheatPushers; sh.uniforms.uWind = wind;
-        sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform vec4 uPush[' + WHEAT_PUSH + ']; uniform float uWind;')
+        sh.uniforms.uPush = wheatPushers; sh.uniforms.uWind = wind; sh.uniforms.uCrop = cropU;
+        sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform vec4 uPush[' + WHEAT_PUSH + ']; uniform float uWind; uniform int uCrop; attribute float sheaf;')
           .replace('#include <begin_vertex>', `#include <begin_vertex>
+            { int sn = int(sheaf + 0.5); bool stub = sn >= 64; bool up = ((uCrop >> (stub ? sn - 64 : sn)) & 1) == 1;
+              if (up == stub) transformed = vec3(0.0); }   // (a sheaf cut, or its stubble while it stands: pinched to nothing)
             vec3 wp = (modelMatrix * vec4(transformed, 1.0)).xyz;
             // the wind: each stalk's own sway plus a slow wave rolling across the field, more toward the tip
             float wave = sin(uWind * 0.05 + wp.x * 2.3 + wp.z * 1.7) * 0.35 + max(0.0, sin(uWind * 0.03 - (wp.x - wp.z) * 1.6)) * 0.9;
@@ -4251,7 +4282,7 @@ gl_Position = projectionMatrix * mvPosition;`;
               }
             }`);
       };
-      m.customProgramCacheKey = () => 'wheat2';
+      m.customProgramCacheKey = () => 'wheat3';
       wheatMats.set(col, m);
     }
     return m;
@@ -4410,12 +4441,12 @@ gl_Position = projectionMatrix * mvPosition;`;
   // twenty wool puffs; the outlines follow the same spheres.
   function animalModel(kind, tc){ const p0 = POLY; POLY = 0.6; try { return ANIMAL_MODELS[kind](tc); } finally { POLY = p0; } }
   function bakeStill(g){
-    const live = []; g.traverse(o => { if (o.name === 'flag' || o.name === 'sails' || o.name === 'pennant' || o.name === 'portcullis' || o.name === 'cloth' || o.name === 'plate' || o.name === 'hoist' || o.name === 'anim') live.push(o); else if (o.name === 'horseNeck' && o.parent && o.parent !== g) live.push(o.parent); });
+    const live = []; g.traverse(o => { if (o.name === 'flag' || o.name === 'sails' || o.name === 'pennant' || o.name === 'portcullis' || o.name === 'cloth' || o.name === 'plate' || o.name === 'hoist' || o.name === 'anim' || o.name === 'crop') live.push(o); else if (o.name === 'horseNeck' && o.parent && o.parent !== g) live.push(o.parent); });
     const lift = live.filter(o => !live.some(p => p !== o && p.getObjectById(o.id)));   // (outermost only)
     g.updateMatrixWorld(true);
     const hold = new THREE.Group(); hold.updateMatrixWorld(true);
     // (a moving part merged too: round its own pivots — a horse's neck, head, tail — or whole, as the sails that only turn)
-    for (const o of lift) { hold.attach(o); if (o.name === 'cloth' || o.name === 'plate') continue; if (o.name === 'sails' || o.name === 'portcullis') bakeWhole(o); else if (o.name === 'hoist' || o.name === 'anim') o.children.forEach(c => bakeRigid(c, null, true)); else bakeRigid(o, null, true); }   // (a hoist: its rope and its log, each moving on its own)
+    for (const o of lift) { hold.attach(o); if (o.name === 'cloth' || o.name === 'plate' || o.name === 'crop') continue; if (o.name === 'sails' || o.name === 'portcullis') bakeWhole(o); else if (o.name === 'hoist' || o.name === 'anim') o.children.forEach(c => bakeRigid(c, null, true)); else bakeRigid(o, null, true); }   // (a hoist: its rope and its log, each moving on its own)
     bakeWhole(g);
     for (const o of lift) g.attach(o);
   }
@@ -4438,61 +4469,76 @@ gl_Position = projectionMatrix * mvPosition;`;
   // A finished building's model is the same for every building of its kind, age and team: made ONCE, at the origin, and
   // each building takes a copy placed by its position — its geometry shared (a second barracks, an age-up's fifty
   // buildings: no model made again). Not a house or a farm (their shape is their spot's: their neighbours, their crop),
-  // a site or a damaged one (their parts each their own). A copy's own: its root, its moving parts' transforms, a flag's
-  // cloth (waved in place each frame); its spots in the world (smoke, trainees) and a horse's gait seed set here.
+  // a site or a damaged one (their parts each their own). A copy's own: its root and its moving parts' transforms; its
+  // spots in the world (smoke, trainees) and a horse's gait seed set here.
   const SHARED_MODELS = new Set(['TC', 'BARRACKS', 'LCAMP', 'MCAMP', 'MILL', 'TOWER', 'PTOWER', 'MARKET', 'CASTLE']);
   const bldTemplates = new Map();
+  const SKINNED = new Set([...SHARED_MODELS, 'HOUSE']);   // (a farm and a wall keep their own site: another shape)
   function sharedModel(e, key){
     const sk = e.btype + '|' + key; let T = bldTemplates.get(sk);
     if (!T) { const eL = { ...e, x: 0, y: 0 }; T = new THREE.Group();
-      MODELS[e.btype](T, eL); footPlate(T, eL); addHulls(T); bakeStill(T); const c = centerOf(eL); levelGeo(T, c.x, c.y, true);
+      MODELS[e.btype](T, eL); footPlate(T, eL); addHulls(T);
+      T.userData.bodyH = bodyHeight(T);   // (its skin's full height: before the bake merges a flagpole into the body)
+      bakeStill(T); const c = centerOf(eL); levelGeo(T, c.x, c.y, true);
       T.traverse(o => { if (o.geometry) o.geometry.userData.own = false; });   // (shared: never freed with a building)
       bldTemplates.set(sk, T); }
     const g = T.clone(), src = [], dst = []; T.traverse(o => src.push(o)); g.traverse(o => dst.push(o));
     for (let i = 0; i < src.length; i++) { const o = dst[i]; o.userData = { ...src[i].userData };   // (clone() copies userData through JSON: an anim's function lost)
-      if (o.name === 'flag' && o.geometry) { const gu = o.geometry.userData; o.geometry = o.geometry.clone(); o.geometry.userData = { ...gu, own: true }; }
       if (o.userData.horseSeed !== undefined) o.userData.horseSeed = e.id * 0.37 % 1; }
     g.position.set(e.x, 0, e.y); g.userData.bid = e.id;
     if (g.userData.smoke) g.userData.smoke = g.userData.smoke.map(([x, y, z]) => [x + e.x, y, z + e.y]);
     if (g.userData.trainees) g.userData.trainees = g.userData.trainees.map(t => ({ ...t, x: t.x + e.x, z: t.z + e.y }));
     freezeStill(g); return g;
   }
+  // A model's key: what shapes it (a skinned kind's states are its skin, not its model)
+  function modelKey(e, hurt){
+    return (AGELESS.has(e.btype) ? '-' : ageOf(e)) + ':' + teamColor(e.team) + ':' + (e.w || 0) + 'x' + (e.h || 0) + (SKINNED.has(e.btype) ? '' : ':' + (e.complete ? 1 : 0) + (hurt ? ':hurt' : ''))
+      + (e.btype === 'FARM' ? (e.exhausted ? ':x' : '') : e.btype === 'HOUSE' ? ':' + (houseFlush(e) || []).map(Number).join('') : '');
+  }
   function refreshModel(e){
     const hurt = isHurt(e);
-    const key = (AGELESS.has(e.btype) ? '-' : ageOf(e)) + ':' + teamColor(e.team) + ':' + (e.w || 0) + 'x' + (e.h || 0) + ':' + (e.complete ? 1 : 0) + (hurt ? ':hurt' : '')
-      + (e.btype === 'FARM' ? ':' + farmStandingLive(e).map(Number).join('') : e.btype === 'HOUSE' ? ':' + (houseFlush(e) || []).map(Number).join('') : '');
+    const skinned = SKINNED.has(e.btype), key = modelKey(e, hurt);
     let rec = solids.get(e.id);
-    // (a standing farm whose crop alone changed: the crop's geometry is swapped, the model stays)
-    if (rec && rec.crop && rec.key !== key && e.complete && !hurt && !rec.site && !rec.dmg && rec.key.slice(0, rec.key.lastIndexOf(':')) === key.slice(0, key.lastIndexOf(':'))) {
-      if (rec.crop.geometry.userData.crop) cropSync(e, rec.crop.geometry);
-      else { rec.crop.geometry.dispose(); rec.crop.geometry = farmCrop(e); const c = centerOf(e); levelGeo(rec.obj, c.x, c.y); }   // (the first change since its bake merged it: a crop of its own)
-      rec.key = key; }
+    if (rec && rec.crop && rec.key === key) { const m = cropMask(e); if (m !== rec.crop.userData.cropMask) cropCut(e, rec.crop, m); }   // (its crop: a mask, set in place)
     if (!rec || rec.key !== key) {
       if (bldSpent > BLD_MS) { bldLeft = true; return; }   // (as refreshWall)
       const tb = performance.now();
       if (rec) { if (rec.site && e.complete) siteDone(e); dropSolid(rec); }
       let g;
-      if (e.complete && !hurt && SHARED_MODELS.has(e.btype)) g = sharedModel(e, key);
+      if (skinned && SHARED_MODELS.has(e.btype)) g = sharedModel({ ...e, complete: true }, key);
       else {
         g = new THREE.Group();
-        MODELS[e.btype](g, hurt ? { ...e, openTop: true } : e); g.userData.bid = e.id; // (the world view's click picks it by this; a damaged one open under its roof)
+        const em = skinned ? { ...e, complete: true } : hurt ? { ...e, openTop: true } : e;   // (a damaged unskinned one: open under its roof)
+        MODELS[e.btype](g, em); g.userData.bid = e.id; // (the world view's click picks it by this)
         footPlate(g, e);
         addHulls(g);
-        if (e.complete && !hurt) { bakeStill(g); const c = centerOf(e); levelGeo(g, c.x, c.y); freezeStill(g); }   // (a site, or a damaged one, stays in parts: constructionSite reads each wall's depth)
+        if (skinned) g.userData.bodyH = bodyHeight(g);
+        if (skinned || (e.complete && !hurt)) { bakeStill(g); const c = centerOf(e); levelGeo(g, c.x, c.y); freezeStill(g); }   // (an unskinned site, or a damaged one, stays in parts: constructionSite reads each wall's depth)
       }
       scene.add(g);
-      const flags = [], horses = [];
+      const horses = [];
       g.traverse(o => {
-        if (o.name === 'flag') flags.push(o);
         if (o.name === 'horseNeck') horses.push({ neck: o, head: o.getObjectByName('horseHead'), tail: o.parent.getObjectByName('horseTail'), seed: o.parent.userData.horseSeed });
       });
       const pennants = [], cloths = [], hoists = [], anims = []; g.traverse(o => { if (o.name === 'anim') anims.push(o); if (o.name === 'pennant') pennants.push(o); if (o.name === 'cloth') cloths.push(o); if (o.name === 'hoist') hoists.push(o); });
-      rec = { obj: g, key, cloths, crop: e.btype === 'FARM' ? g.children.find(c => c.material === wheatMat()) : null, sails: g.getObjectByName('sails'), flags, horses, pennants, hoists, anims, smoke: g.userData.smoke, trainees: (g.userData.trainees || []).map(t => ({ ...t, obj: null, key: '' })), roof: e.complete && g.userData.roof ? g.userData.roof.map(p => ({ ...p, obj: null, key: '' })) : null, yard: g.userData.yard ? g.userData.yard.map(p => ({ ...p, obj: null, key: '' })) : null, portcullis: g.getObjectByName('portcullis'), team: e.team, age: ageOf(e) };
-      if (!e.complete) { const b = BLDGS[e.btype]; rec.site = constructionSite(g, e.x, e.y, e.w || b.w, e.h || b.h, !OPEN_SITE.has(e.btype)); rec.siteOf = e.id; }
+      rec = { obj: g, key, cloths, crop: e.btype === 'FARM' ? g.getObjectByName('crop') : null, sails: g.getObjectByName('sails'), horses, pennants, hoists, anims, smoke: g.userData.smoke, trainees: (g.userData.trainees || []).map(t => ({ ...t, obj: null, key: '' })), roof: e.complete && g.userData.roof ? g.userData.roof.map(p => ({ ...p, obj: null, key: '' })) : null, yard: g.userData.yard ? g.userData.yard.map(p => ({ ...p, obj: null, key: '' })) : null, portcullis: g.getObjectByName('portcullis'), team: e.team, age: ageOf(e) };
+      if (skinned) {}
+      else if (!e.complete) { const b = BLDGS[e.btype]; rec.site = constructionSite(g, e.x, e.y, e.w || b.w, e.h || b.h, !OPEN_SITE.has(e.btype)); rec.siteOf = e.id; }
       else if (hurt) { const b = BLDGS[e.btype]; rec.dmg = buildingDamage(g, e.x, e.y, e.w || b.w, e.h || b.h); rec.dmg.jump(Math.min(DMG_FROM, e.hp / e.maxHp)); }
       solids.set(e.id, rec);
       bldSpent += performance.now() - tb;
     }
+    if (skinned) skinState(rec, e, hurt);
+  }
+  // its skin for what it is now: a site's, a damaged one's, none (a site done: its dust)
+  function skinState(rec, e, hurt){
+    const want = !e.complete ? 'site' : hurt ? 'dmg' : 'ok';
+    if (rec.state === want) return;
+    if (rec.site) { rec.site.skin.restore(); rec.site = null; if (want !== 'site') siteDone(e); }
+    if (rec.dmg) { rec.dmg.skin.restore(); rec.dmg = null; }
+    if (want === 'site') { rec.site = shaderSite(rec.obj); rec.siteOf = e.id; }
+    else if (want === 'dmg') { rec.dmg = shaderDamage(rec.obj); rec.dmg.jump(Math.min(DMG_FROM, e.hp / e.maxHp)); }
+    rec.state = want;
   }
   const OPEN_SITE = new Set(['MARKET', 'FARM']); // open ground (a plaza, a field): no scaffold, the stalls / crops just come up
   // a finished building hurt enough to show it (a farm is worn out, not broken)
@@ -4666,6 +4712,48 @@ gl_Position = projectionMatrix * mvPosition;`;
   const SITE_NOISE = `float siteH(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
     float siteN(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
       return mix(mix(siteH(i), siteH(i + vec2(1.0, 0.0)), f.x), mix(siteH(i + vec2(0.0, 1.0)), siteH(i + vec2(1.0, 1.0)), f.x), f.y); }`;
+  // A building's states — a site going up, damaged, falling — as its finished model under a SKIN of cut materials: each
+  // part's material cloned once for the building (the same program for all), cut in the shader at a height (uCut) its
+  // top broken by a noise (uJag), its insides in shade. No model made for a site, none made again when it's done,
+  // damaged or repaired: the skin comes off (restore). H: the body's height (bodyHeight, before the bake).
+  function bodyHeight(g){
+    const hb = new THREE.Box3(), skip = o => { for (let q = o; q && q !== g; q = q.parent) if (LIVE_PARTS.has(q.name) || q.name === 'flagPole' || q.name === 'pennant') return true; return false; };
+    g.updateMatrixWorld(true); g.traverse(o => { if (o.isMesh && !skip(o) && !HULL_MATS.has([].concat(o.material)[0])) hb.expandByObject(o); });
+    return hb.isEmpty() ? 1 : hb.max.y - g.position.y;
+  }
+  function cutSkin(g){
+    const H = g.userData.bodyH || 1, cut = { value: 1e9 }, jag = { value: 0 }, made = new Map(), was = [];
+    const cm = m => { let c = made.get(m); if (c) return c; c = m.clone(); const ob = m.onBeforeCompile, key = m.customProgramCacheKey.call(m) + '|cut';
+      c.onBeforeCompile = function(sh, r){ if (ob) ob.call(this, sh, r); sh.uniforms.uCut = cut; sh.uniforms.uJag = jag;
+        sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vCutW;').replace('#include <project_vertex>', '#include <project_vertex>\nvCutW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+        sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform float uCut; uniform float uJag; varying vec3 vCutW;\n' + SITE_NOISE)
+          .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\nif (vCutW.y > uCut - uJag * siteN(vCutW.xz * 3.2)) discard;')
+          .replace('#include <dithering_fragment>', '#include <dithering_fragment>\nif (!gl_FrontFacing) gl_FragColor.rgb *= ' + SITE_SHADE.toFixed(3) + ';'); };
+      c.onBeforeCompile.fow = !!(ob && ob.fow); c.customProgramCacheKey = () => key; if (!HULL_MATS.has(m)) c.side = THREE.DoubleSide;
+      made.set(m, c); return c; };
+    g.traverse(o => { if (!o.material) return; was.push([o, o.material, o.userData.siteOwn]); o.material = Array.isArray(o.material) ? o.material.map(cm) : cm(o.material); o.userData.siteOwn = true; });
+    return { H, cut, jag, made, restore(){ for (const [o, m, so] of was) { o.material = m; o.userData.siteOwn = so; } for (const c of made.values()) c.dispose(); } };
+  }
+  // a site: cut at the build height (the full height at 95% built)
+  function shaderSite(g){
+    const skin = cutSkin(g), set = p => { skin.cut.value = skin.H * Math.min(1, Math.max(0, p) / 0.95) + (p > 0 ? 0.001 : -1); };
+    set(0); return { set, skin };
+  }
+  // damaged: health f lowers the top, broken more the lower it goes; it falls to nothing (collapse), dust where it breaks
+  function shaderDamage(g){
+    const skin = cutSkin(g), H = skin.H, box = new THREE.Box3().setFromObject(g);
+    let shown = DMG_FROM, target = DMG_FROM, rate = 0.5, last = shown;
+    const show = f => { const k = Math.max(0, Math.min(1, f / DMG_FROM)); skin.cut.value = f <= 0 ? -1 : H * (0.3 + 0.7 * k) + 0.02; skin.jag.value = H * 0.45 * (1 - k); };
+    const dustAt = (y, n) => { for (let i = 0; i < n; i++) puffBurst(box.min.x + Math.random() * (box.max.x - box.min.x), y, box.min.z + Math.random() * (box.max.z - box.min.z), 3); };
+    const tick = dt => {
+      if (shown !== target) { shown = target < shown ? Math.max(target, shown - rate * dt) : Math.min(target, shown + rate * dt); show(shown);
+        if (shown < last - 0.03) { dustAt(Math.max(0.05, skin.cut.value - skin.jag.value * 0.5), 2); last = shown; } else if (shown > last) last = shown; }
+      return shown <= 0;
+    };
+    show(shown);
+    return { skin, set: f => { target = Math.max(0, Math.min(1, f)); }, jump: f => { shown = last = target = f; show(f); },
+      collapse: () => { target = 0; rate = 1.4; dustAt(0.05, 6); }, tick, get shown(){ return shown; } };
+  }
   function constructionSite(g, x0, z0, w, h, scaffold = true, jag = false){
     g.updateMatrixWorld(true);
     // Pieces (piece(): roofs, caps, awnings) are set in place whole once the walls reach them; the rest rises by the cut.
@@ -5000,15 +5088,6 @@ gl_Position = projectionMatrix * mvPosition;`;
         // (out of sight it stays as it was left: an enemy's gate doesn't work in the fog)
         if (!ge || buildingFogLevel(ge) === 2) rec.door.position.y = ge ? (ge.gateProgress || 0) * 26 / HPX : 0;
       }
-      if (rec.flags && rec.obj.visible) for (const f of rec.flags) { // the art's travelling wave, a ripple down its height too, shaded as it folds
-        const pos = f.geometry.attributes.position, rest = f.geometry.userData.rest, L = f.userData.len, H = f.userData.hgt || 1, fs = f.userData.s || 1, ph = f.userData.phase || 0;
-        for (let i = 0; i < pos.count; i++) {
-          const u = Math.max(0, rest[3 * i] / L), v = Math.max(0, -rest[3 * i + 1] / H), a = t + ph;   // (u out from the staff, v down from its top)
-          pos.setZ(i, (Math.sin(a - u * 4.2) * 0.07 + Math.sin(a * 0.63 - u * 7) * 0.02 + Math.sin(a * 1.4 - u * 5 + v * 2.4) * 0.012) * u * fs);
-          pos.setY(i, rest[3 * i + 1] - (0.05 * u * u + 0.012 * u * v) * fs);   // (the free corner hangs a touch lower)
-        }
-        pos.needsUpdate = true; f.geometry.computeVertexNormals();
-      }
       if (rec.trainees) for (const tr of rec.trainees) { // the spearman's thrust on the pose cache (villagerPose's idiom), facing the dummy
         const opt = { unit: 'spearman', eq: soldierEquip('spearman', rec.age, 0, 0, false) }, ph = ((aTick * 0.026 + tr.seed) % 1 + 1) % 1, step = Math.floor(ph * VIL_STEPS);
         rigPose(tr, 'attack', ph, false, opt, teamColor(rec.team));
@@ -5070,9 +5149,21 @@ gl_Position = projectionMatrix * mvPosition;`;
     fowAll(g);
     return renderer.compileAsync ? renderer.compileAsync(g, camera, scene) : Promise.resolve();
   }
+  // A skinned kind: its finished model (the shared template made ahead too) under its skin, compiled and drawn once,
+  // the skin's materials kept (their programs held)
+  function warmSkin(btype, team){
+    try { const e = { id: -9, type: 'building', btype, x: 2, y: 2, team, complete: true, hp: 1, maxHp: 1, queue: [], garrison: [] };
+      let g; if (SHARED_MODELS.has(btype)) g = sharedModel(e, modelKey(e, false));
+      else { g = new THREE.Group(); MODELS[btype](g, e); footPlate(g, e); addHulls(g); g.userData.bodyH = bodyHeight(g); bakeStill(g); }
+      fowAll(g); const skin = cutSkin(g); skin.cut.value = (g.userData.bodyH || 1) * 0.5;
+      const done = () => { warmKept.push(...skin.made.values()); g.traverse(o => { o.userData.siteOwn = false; }); dropSolid({ obj: g }); };
+      warmCompile(g).then(() => { warmRender(g); done(); }, done);
+    } catch (err) { /* a warm-up only */ }
+  }
   function warmStep(){
     const q = warmQueue.shift(); if (!q || ((teamAge && teamAge[q.team]) || 0) !== q.age) return;
     const { btype, hurt } = q, b = BLDGS[btype];
+    if (SKINNED.has(btype)) { if (hurt) return; warmSkin(btype, q.team); return; }
     const e = { id: -9, type: 'building', btype, x: 2, y: 2, w: b.w, h: b.h, team: q.team, complete: hurt || !!q.whole, hp: b.hp * 0.4, maxHp: b.hp, buildProgress: 0, buildTime: 200, gateProgress: 0, queue: [], garrison: [] };
     try { const g = new THREE.Group(); g.userData.levelAs = e; MODELS[btype](g, hurt ? { ...e, openTop: true } : e); addHulls(g); fowAll(g);   // (patched before a site's clones of them are cut, as a standing world's are)
       const rec = { obj: g }; if (hurt) rec.dmg = buildingDamage(g, e.x, e.y, b.w, b.h); else if (!q.whole) rec.site = constructionSite(g, e.x, e.y, b.w, b.h, !OPEN_SITE.has(btype));
@@ -7167,7 +7258,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     dropFalls();
     for (const [id, r] of vilCorpses) { dropVillager(r); scene.remove(r.blood); r.blood.geometry.dispose(); r.blood.material.dispose(); }
     vilCorpses.clear();
-    tickPos.clear(); farmLive.clear(); farmPrev.clear(); lastPh.clear();
+    tickPos.clear(); farmLive.clear(); lastPh.clear();
   }
 
   // Toggle for the selected unit: open, switch to it, or close if already on it (the world view: its eyes, or back to orbit).
@@ -7263,7 +7354,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   window.__povMem = () => { const sz = m => { let b = 0; for (const v of m.values()) { if (v && v.m) b += v.m.byteLength || 0; } return b; };
     let tv = 0; for (const T of rigTemplates.values()) tv += T.verts || 0; let cv = 0; for (const c of vilCache.values()) cv += c.verts || 0;
     return { rigSamples: rigSamples.size, rigSampleMB: +(sz(rigSamples) / 1048576).toFixed(1), rigTemplates: rigTemplates.size, templateVertsK: Math.round(tv / 1000), vilCache: vilCache.size, vilCacheVertsK: Math.round(cv / 1000),
-      tickPos: tickPos.size, heading: heading.size, lastPh: lastPh.size, farmPrev: farmPrev.size, legMaps: legMaps.size, mats: mats.size, blobGeos: blobGeos.size, painted: painted.size, villagers: villagers.size }; }; // dev: cache sizes
+      tickPos: tickPos.size, heading: heading.size, lastPh: lastPh.size, legMaps: legMaps.size, mats: mats.size, blobGeos: blobGeos.size, painted: painted.size, villagers: villagers.size }; }; // dev: cache sizes
   window.povStats = () => ({ frames: frame, jsMs: +stats.js.toFixed(2), glMs: +stats.gl.toFixed(2), units: villagers.size, animals: animals.size, buildings: solids.size, arrows: feat.shaft ? feat.shaft.n : 0, shadows: feat.shadow ? feat.shadow.mesh.count : 0, calls: renderer ? renderer.info.render.calls : 0, tris: renderer ? renderer.info.render.triangles : 0,
     programs: renderer ? renderer.info.programs.length : 0, geos: renderer ? renderer.info.memory.geometries : 0, tex: renderer ? renderer.info.memory.textures : 0 });   // (programs / geos / tex rising in a slow frame: what it was building)
 })();
