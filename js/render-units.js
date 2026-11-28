@@ -1400,15 +1400,18 @@ function isUnitMoving(e){ return e.path.length>0 || e.pressWalk===tick; }
 // For the drawing: a press-slide onto a target already in reach (the sim's cosmetic packing round a carcass) isn't a
 // walk — the drawn work spot walks it in (villagerWorkSpot); counted, the two disagreed and the villager lurched in and
 // out, its heading swinging, as the sheep fell. Viewer-only.
-// Moving as drawn: on a path, pressing into reach this tick, or walking the tick before and moved since (render.js's
-// _drawPrev) — the sim stands a unit at its tile's centre one tick between its path's end and its press into contact:
-// read as stopped, it flicked into its work pose for that frame and back. (Walking before: a worker nudged by its
+// Moving as drawn: on a path, pressing into reach this tick, or walked within DRAWN_SETTLE ticks (render.js's
+// _walkedAt) — the sim stands a unit still a tick or three mid-walk (a path's end before its press into contact, a press
+// waiting on a neighbour's body): read as stopped, it flicked into its work pose and back. (Walked: a worker nudged by its
 // neighbours isn't walking.)
+const DRAWN_SETTLE = T30(6);
 function isDrawnMoving(e){
-  if (e.target && !e.task && inActionRange(e)) return e.path.length > 0;   // (a fighter in reach: its press steps are its strike's)
+  // (a fighter in reach: its press steps are its strike's — not a butcher's: its press is the walk into its spot round the
+  // carcass, a tile and more; read as standing, it slid there crouched)
+  if (e.target && !e.task && inActionRange(e)) { const t = entitiesById.get(e.target); if (!t || t.utype !== 'sheep_carcass') return e.path.length > 0; }
   if (e.path.length > 0 || e.pressWalk === tick) return true;
-  const p = typeof _drawPrev !== 'undefined' && _drawPrev.get(e.id);
-  return !!(p && p[2] && (e.x !== p[0] || e.y !== p[1]));
+  const w = typeof _walkedAt !== 'undefined' ? _walkedAt.get(e.id) : undefined;
+  return w !== undefined && tick - w <= DRAWN_SETTLE;
 }
 
 // The ground a drawn animal covered since its last frame (a: its render state, px/py the spot last seen) → [mx, my];

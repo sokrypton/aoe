@@ -10,8 +10,7 @@
 (function(){
   const RANGE = 28;                  // tiles drawn around the eye
   const PX = HALF_TW * Math.SQRT2;   // iso art px per world tile across the view (~45)
-  const UNIT_BUF = 112, UNIT_ANCHOR_Y = 66; // the outline pass's unit buffer (render-outlines.js)
-  const SS = 1.5, SS_NEAR = 3;       // billboard canvas supersample; units near the camera get more
+  const SS = 1.5;                    // canvas texture supersample
   const MAX_UNITS = 60, MAX_UNITS_WORLD = 150;   // the corner window / the 3D world view (rigs are cheap; nearest the camera first)
   const STATIC_MS = 500;             // terrain/trees/building-set refresh cadence
   const BLDG_TOP = 230, BLDG_BASE = 10; // px of headroom above / margin below a footprint
@@ -23,7 +22,7 @@
   let unrevealed = false;   // the world view opened, its first frame not drawn yet (window.world3D waits for it)
   let fadeIn = false;       // that first frame fades up (a match opening in 3D)
   let renderer, scene, camera, groundTex, groundData, groundMesh, groundFor = null, fowTex, fowData, SKY, VOID;
-  const unitSprites = new Map(), solids = new Map(), mats = new Map(), footRow = new Map(), animals = new Map(); // animals: id → 3D sheep/bear // footRow: utype → lowest painted canvas row
+  const solids = new Map(), mats = new Map(), animals = new Map(); // animals: id → 3D sheep/bear
   let unitBox = null, unitRod = null;
   let pip, titleEl, followId = null, raf = 0, lastStatic = 0, staticAt = null, frame = 0;
   let eye = null, yaw = 0;           // smoothed unit position / heading
@@ -1205,7 +1204,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   };
   // A cloth's triangles (P: 9 numbers each, grp: each one's material) as one geometry, sorted into one group per material
   // (a group a triangle made every one a separate part to merge: bakePose)
-  // W: each vertex's place on the cloth [u across, t down from its tied edge] (blowCloth moves it by them)
+  // W: each vertex's place on the cloth [u across, t down from its tied edge] (clothMat's shader moves it by them)
   function clothGeo(P, grp, W){
     const out = [], wo = [], groups = [];
     for (const m of [0, 1]) { const start = out.length / 3; grp.forEach((g2, i) => { if (g2 === m) { for (let k = 0; k < 9; k++) out.push(P[i * 9 + k]); for (let k = 0; k < 6; k++) wo.push(W[i * 6 + k]); } }); groups.push([start, out.length / 3 - start, m]); }
@@ -1222,17 +1221,23 @@ gl_Position = projectionMatrix * mvPosition;`;
     const eg = edgesOf(geo, thresh), EP = eg.attributes.position, ew = new Float32Array(EP.count * 2);
     for (let i = 0; i < EP.count; i++) { const j = at.get(key(EP.getX(i), EP.getY(i), EP.getZ(i))); if (j != null) { ew[2 * i] = W.getX(j); ew[2 * i + 1] = W.getY(j); } }
     eg.setAttribute('wind', new THREE.BufferAttribute(ew, 2));
-    mesh.add(new THREE.LineSegments(eg, ink)); mesh.name = 'cloth'; mesh.userData.wind = { amp, ph }; return mesh;
+    for (const g2 of [geo, eg]) { const n = g2.attributes.position.count, k = new Float32Array(n * 2); for (let i = 0; i < n; i++) { k[2 * i] = amp; k[2 * i + 1] = ph; } g2.setAttribute('windK', new THREE.BufferAttribute(k, 2)); }
+    mesh.material = Array.isArray(mesh.material) ? mesh.material.map(clothMat) : clothMat(mesh.material);
+    mesh.add(new THREE.LineSegments(eg, clothMat(ink))); mesh.name = 'cloth'; return mesh;
   }
-  // The wind on the cloths (render-buildings' clothWind, the 2D's: the same swell): each vertex lifted from where it was
-  // made by its place on the cloth. Viewer-only, on the flags' clock.
-  function blowCloth(mesh){
-    const { amp, ph } = mesh.userData.wind;
-    for (const geo of [mesh.geometry, mesh.children[0] && mesh.children[0].geometry]) { if (!geo) continue;
-      const P = geo.attributes.position, W = geo.attributes.wind; if (!W) continue;
-      const base = geo.userData.baseY || (geo.userData.baseY = Float32Array.from({ length: P.count }, (_, i) => P.getY(i)));
-      for (let i = 0; i < P.count; i++) P.setY(i, base[i] - amp * clothWind(W.getX(i), W.getY(i), ph));
-      P.needsUpdate = true; }
+  // The wind on the cloths (render-buildings' clothWind, the 2D's: the same swell), in the vertex shader: each vertex
+  // lowered by its place on the cloth (wind: u across, t down) at its cloth's strength and phase (windK). Moved on the
+  // CPU and re-sent, two Town Center awnings were ~7MB a second of uploads. Viewer-only, on the flags' clock (wind).
+  const clothMats = new Map();
+  function clothMat(m){
+    let c = clothMats.get(m); if (c) return c;
+    c = m.clone(); const prev = m.onBeforeCompile, key = m.customProgramCacheKey() + '|cloth', C = TC_CANVAS;
+    c.onBeforeCompile = function(sh, r){ prev.call(this, sh, r); sh.uniforms.uWind = wind;
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute vec2 wind; attribute vec2 windK; uniform float uWind;')
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+          transformed.y -= windK.x * ${C.wind.toFixed(4)} * wind.y * wind.y * sin(3.14159265 * wind.x) * sin(uWind * ${C.windRate.toFixed(4)} + windK.y - 1.2 * wind.x);`); };
+    c.customProgramCacheKey = () => key;
+    clothMats.set(m, c); return c;
   }
   // A Market stall's tent (drawBuilding MARKET's stall, MARKET_TENT): four striped faces from a peak over (cx, cz) down to
   // the eaves of the square ±R at height y0, sagging, folded and draped between the corners, the cloth thick (its
@@ -1852,7 +1857,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   const TREE_H = ART_TREE_H * TRUNK_K, CROWN_R = 12 / PX * CROWN_K, TRUNK_R = 2.2 / PX * 1.35, STUMP_H = 8 / HPX;
   const wind = { value: 0 };
   const feat = {};
-  let fallers = [], glints = [];
+  let fallers = [], glints = [], fallSent = null;   // (fallSent: the fallers list last sent to the GPU with all at rest: none to redo)
   // Bend a material in the art's wind toward screen-x, more the higher the
   // vertex. Instances may turn about y and scale, so the world wind direction
   // is taken into each instance's own frame (local y stays height).
@@ -2064,7 +2069,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       }
     }
     putTile = -1;
-    for (const k in feat) { const f = feat[k]; f.mesh.count = f.n; if (f.hull) f.hull.count = f.n; f.mesh.instanceMatrix.needsUpdate = true; if (f.mesh.instanceColor) f.mesh.instanceColor.needsUpdate = true; }
+    for (const k in feat) { const f = feat[k]; f.mesh.count = f.n; if (f.hull) f.hull.count = f.n; sendInst(f.mesh, f.n); }
   }
   // Has the camera turned, zoomed or slid enough since the last list that the margin might show its edge?
   function viewTurned(){
@@ -2100,13 +2105,18 @@ gl_Position = projectionMatrix * mvPosition;`;
     return mesh;
   }
   let chipMesh = null, hazeMesh = null, _bitQ = null, _bitE, _bitM, _bitS;   // (three.js loads lazily: made on first use)
+  // Send the live part of an instance pool to the GPU: its first n items, nothing when empty. Flagged whole, every pool
+  // (FEAT_CAP slots: arrows, felled trees, chips, shadows…) went up every frame — ~2.8MB a frame for a few live ones.
+  // (one range, reset each time: a pool not drawn for a while must not pile up ranges)
+  function sendFirst(attr, n){ if (!attr || n <= 0) return; attr.clearUpdateRanges(); attr.addUpdateRange(0, n * attr.itemSize); attr.needsUpdate = true; }
+  function sendInst(mesh, n){ sendFirst(mesh.instanceMatrix, n); sendFirst(mesh.instanceColor, n); }
   function bitsDraw(mesh, list){
     if (!_bitQ) { _bitQ = new THREE.Quaternion(); _bitE = new THREE.Euler(); _bitM = new THREE.Matrix4(); _bitS = new THREE.Vector3(); }
     const n = Math.min(list.length, mesh.instanceMatrix.count), A = mesh.geometry.attributes.iAlpha;
     for (let i = 0; i < n; i++) { const b = list[i];
       mesh.setMatrixAt(i, _bitM.compose(b.p, b.rx != null ? _bitQ.setFromEuler(_bitE.set(b.rx, 0, b.rz)) : _bitQ.identity(), b.s.isVector3 ? b.s : _bitS.setScalar(b.s)));
       mesh.setColorAt(i, b.col); if (A) A.array[i] = b.a; }
-    mesh.count = n; mesh.instanceMatrix.needsUpdate = true; mesh.instanceColor.needsUpdate = true; if (A) A.needsUpdate = true;
+    mesh.count = n; sendInst(mesh, n); sendFirst(A, n);
   }
   const bitCols = new Map(), bitCol = c => { let k = bitCols.get(c); if (!k) bitCols.set(c, k = new THREE.Color(c)); return k; };
   function chipBurst(x, y, z, ang){ // a few wood chips thrown back off the bark, falling and fading
@@ -2130,11 +2140,13 @@ gl_Position = projectionMatrix * mvPosition;`;
     // A cut tree pivots on its stump's top toward screen-right, coming to rest where its crown meets the ground.
     // As 2D, it lies mostly on its own square: a little smaller, and slid back off the stump as it goes down so the
     // crown ends near the square's edge rather than across the next tile.
-    const T = feat.trunkF, C = feat.crownF, SF = feat.shadowF, FIT = 0.85; SF.n = 0;
+    const T = feat.trunkF, C = feat.crownF, SF = feat.shadowF, FIT = 0.85;
+    // (all lying still and the list as last sent: nothing to redo — chopped trees lie for minutes, were rebuilt every frame)
+    if (fallers !== fallSent) { let moving = false; SF.n = 0;
     const dir = _e2 = _e2 || new THREE.Vector3(0, 1, 0).applyAxisAngle(FALL_AXIS, -Math.PI / 2); // the way it falls, on the ground
     T.n = C.n = 0;
     for (const f of fallers) {
-      const u = Math.min(1, (tick - treeFellTicks.get(f.key)) / T30(40)), sc = f.k * (1 + (FIT - 1) * u);
+      const u = Math.min(1, (tick - treeFellTicks.get(f.key)) / T30(40)), sc = f.k * (1 + (FIT - 1) * u); if (!(u >= 1)) moving = true;
       const rest = Math.acos(Math.min(1, Math.max(0, (CROWN_R * sc - STUMP_H * f.k) / (TREE_H * sc))));
       const back = Math.max(0, (TREE_H + CROWN_R) * f.k * FIT - 1.05) * u * u;                  // slides with the fall
       _m.compose(_p.set(f.wx - dir.x * back, STUMP_H * f.k, f.wz - dir.z * back), _q.setFromAxisAngle(FALL_AXIS, -rest * u * u), _s.set(sc, sc, sc)); // accelerating, like a real fall
@@ -2143,8 +2155,8 @@ gl_Position = projectionMatrix * mvPosition;`;
       for (const [a, along, across] of felledTreeShadow(f.k, u)) { if (SF.n >= FEAT_CAP) break;
         _m.compose(_p.set(f.wx + dir.x * a, 0.006, f.wz + dir.z * a), _q.setFromAxisAngle(_s.set(0, 1, 0), Math.atan2(-dir.z, dir.x)), _s.set(2 * along, 1, 2 * across)); SF.mesh.setMatrixAt(SF.n++, _m); }
     }
-    for (const f of [T, C]) { f.mesh.count = f.n; f.hull.count = f.n; f.mesh.instanceMatrix.needsUpdate = true; }
-    SF.mesh.count = SF.n; SF.mesh.instanceMatrix.needsUpdate = true;
+    for (const f of [T, C]) { f.mesh.count = f.n; f.hull.count = f.n; sendInst(f.mesh, f.n); }
+    SF.mesh.count = SF.n; sendInst(SF.mesh, SF.n); fallSent = moving ? null : fallers; }
     // Glints face the camera and twinkle: each swells and fades on its own phase.
     const G = feat.glint, face = _q.setFromAxisAngle(_p.set(0, 1, 0), Math.atan2(-Math.cos(yaw), -Math.sin(yaw)));
     G.n = 0;
@@ -2153,7 +2165,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       if (tw < 0.05) continue;
       G.mesh.setMatrixAt(G.n++, _m.compose(_p.set(g.x, g.y, g.z), face, _s.set(g.size * tw, g.size * tw, 1)));
     }
-    G.mesh.count = G.n; G.mesh.instanceMatrix.needsUpdate = true;
+    G.mesh.count = G.n; sendInst(G.mesh, G.n);
   }
 
   // Shots in flight, on drawProjectiles' path (render-fx projEnds/projAt: where each is loosed from and lands, its parabola), each
@@ -2219,7 +2231,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     }
     for (const f of [S, Hd, V, SP, TR]) {
       f.mesh.count = f.n; if (f.hull) f.hull.count = f.n;
-      f.mesh.instanceMatrix.needsUpdate = true; if (f.mesh.instanceColor) f.mesh.instanceColor.needsUpdate = true;
+      sendInst(f.mesh, f.n);
     }
   }
 
@@ -2504,9 +2516,14 @@ gl_Position = projectionMatrix * mvPosition;`;
   const GAIT = { sheep: SHEEP, bear: { A: 0.45, L: 0.28, lift: 0.05, bob: 0.02 }, dragon: { A: 0.6, L: 0.5, lift: 0.12, bob: 0.03 } }; // (the dragon: long, slow strides — a heavy, unhurried walk; DRAGON_STRIDE in render-units matches)
   const LEG_PHASE = [0, 0.5, 0.25, 0.75].map(f => f * 2 * Math.PI); // legs 0/1 hind, 2/3 fore
   let _dv = null;
+  // A model's named pivot, found once and kept on it: getObjectByName walks the whole model, and the per-frame posers asked
+  // a dozen times a model a frame. (A pivot is never renamed or replaced in a model's life.)
+  const namedParts = new WeakMap();   // (not on userData: three deep-copies that through JSON on a clone)
+  function namedPart(model, name){ let P = namedParts.get(model); if (!P) namedParts.set(model, P = new Map()); let o = P.get(name);
+    if (o === undefined) { o = model.getObjectByName(name) || null; P.set(name, o); } return o; }
   function animateAnimal(model, e, a, dt){
-    const G = GAIT[e.utype], b = model.getObjectByName('body'), neck = model.getObjectByName('neck'), idp = e.id || 0;
-    const legs = [0, 1, 2, 3].map(i => model.getObjectByName('leg' + i));
+    const G = GAIT[e.utype], b = namedPart(model, 'body'), neck = namedPart(model, 'neck'), idp = e.id || 0;
+    const legs = [0, 1, 2, 3].map(i => namedPart(model, 'leg' + i));
     if (e.utype === 'dragon') dragonGaitStep(e, a, a.moved, dt, G.L * Math.sin(G.A));   // (its pivots step too)
     else if (e.utype !== 'bear' && e.utype !== 'sheep') { a.gait += ((a.moved > 1e-4 ? 1 : 0) - a.gait) * Math.min(1, dt * 8);
       a.phase += a.moved / (4 * G.L * Math.sin(G.A)) * 2 * Math.PI; }
@@ -2523,23 +2540,23 @@ gl_Position = projectionMatrix * mvPosition;`;
     } else if (e.utype === 'dragon') {
       // A huge, heavy beast: its pose comes from dragonAnim (render-units, shared with the 2D art) — here set on the
       // model, with the dust and the ground's shake at its footfalls and slam, and smoke from its nostrils.
-      const P = dragonAnim(e, a, dt), head = model.getObjectByName('head');
+      const P = dragonAnim(e, a, dt), head = namedPart(model, 'head');
       b.scale.set(1 + P.chest * 0.35, 1 + P.chest, 1 + P.chest * 0.8);
       b.rotation.set(P.roll, P.yaw, P.pitch);
       b.position.set(P.bodyX, P.bodyY + bob * 0.4, P.bodyZ);
       neck.rotation.z = P.neck; neck.rotation.y = P.neckY;
       head.rotation.z = P.head; head.rotation.x = P.headX;
-      model.getObjectByName('jaw').rotation.z = -P.jaw;
+      namedPart(model, 'jaw').rotation.z = -P.jaw;
       for (const eye of head.children.filter(o => o.name === 'eye')) { eye.userData.sy ??= eye.scale.y; eye.scale.y = eye.userData.sy * (1 - 0.92 * P.eyeShut); }
-      ['tail', 'tail2', 'tail3'].forEach((n, k) => { const j = model.getObjectByName(n); j.rotation.y = P.tail[k]; j.rotation.z = P.tailZ[k]; });
-      model.getObjectByName('spade').rotation.y = P.spade;
+      ['tail', 'tail2', 'tail3'].forEach((n, k) => { const j = namedPart(model, n); j.rotation.y = P.tail[k]; j.rotation.z = P.tailZ[k]; });
+      namedPart(model, 'spade').rotation.y = P.spade;
       const carry = dragonWingCarry(P);                                                  // (render-units: how they're carried, shared with the 2D art)
-      for (const [nm, sd] of [['wingL', 1], ['wingR', -1]]) { const w = model.getObjectByName(nm), d = w.userData.wing;
+      for (const [nm, sd] of [['wingL', 1], ['wingR', -1]]) { const w = namedPart(model, nm), d = w.userData.wing;
         // the tips trail behind the wing's swing: its turn rate, eased
         const v = d.ang === null || !dt ? 0 : (carry.ang - d.ang) / dt; d.ang = carry.ang; d.lag += (Math.max(-0.35, Math.min(0.35, v * 0.12)) - d.lag) * Math.min(1, dt * 7);
         poseDragonWing(w, carry.fd, P.sl, d.lag);
         w.rotation.set(-sd * carry.ang, 0, carry.pitch); }
-      const fl = model.getObjectByName('flame');   // (the mouth: where the fire leaves it)
+      const fl = namedPart(model, 'flame');   // (the mouth: where the fire leaves it)
       dragonFire(model, fl, P.flame, fxDt, P.fly || 0, typeof dragonFireAim === 'function' ? dragonFireAim(e) : null);
       if (!a.lab) {
         for (const i of P.ev.steps) { const f = legs[i].getWorldPosition(_dv || (_dv = new THREE.Vector3())); puffBurst(f.x, 0.04, f.z, 3, '#b7a27a'); shakeFrom(f.x, f.z, 0.03); }
@@ -2554,7 +2571,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       b.rotation.set(P.roll, 0, P.pitch); b.position.set(hind - hind * c + P.lunge, -hind * sn + P.bob, 0);   // pitched about the hind paws
       b.scale.set(1 + P.breath, 1 + P.breath, 1 + P.breath);
       neck.rotation.set(P.shake, -P.neckYaw, P.neckPitch);
-      model.getObjectByName('jaw').rotation.z = -0.7 * P.jaw;
+      namedPart(model, 'jaw').rotation.z = -0.7 * P.jaw;
       legs.forEach((l, i) => { l.userData.y0 ??= l.position.y; l.position.y = l.userData.y0; l.rotation.z = P.legs[i].ang; l.scale.y = P.legs[i].len; });
       return;
     }
@@ -3978,10 +3995,10 @@ gl_Position = projectionMatrix * mvPosition;`;
     if (age > TOPPLE && age < TOPPLE + 300) rot *= 1 + 0.07 * Math.sin((age - TOPPLE) / 300 * Math.PI); // impact recoil
     model.rotation.order = 'YXZ'; model.rotation.x = -rot; // roll about its own long axis
     model.position.y += DEAD_HALF[kind] * Math.sin(Math.min(rot, Math.PI / 2));
-    [0, 1, 2, 3].forEach(i => { const l = model.getObjectByName('leg' + i); l.rotation.z = (i < 2 ? -0.45 : 0.45) * p; l.position.y = l.userData.y0 ?? l.position.y; });
-    const neck = model.getObjectByName('neck'); neck.rotation.set(0.25 * p, 0, -0.35 * p);
+    [0, 1, 2, 3].forEach(i => { const l = namedPart(model, 'leg' + i); l.rotation.z = (i < 2 ? -0.45 : 0.45) * p; l.position.y = l.userData.y0 ?? l.position.y; });
+    const neck = namedPart(model, 'neck'); neck.rotation.set(0.25 * p, 0, -0.35 * p);
     model.traverse(o => { if (o.name === 'eye') o.visible = false; });                 // dead: the eyes close
-    const jaw = model.getObjectByName('jaw'); if (jaw) jaw.rotation.z = -0.25 * p;
+    const jaw = namedPart(model, 'jaw'); if (jaw) jaw.rotation.z = -0.25 * p;
   }
   // A carcass being harvested (its hp is the food left, 100 → 0): the legs go
   // first, then the wool is pulled off bit by bit — the side facing up first — until only the simple
@@ -4391,6 +4408,14 @@ gl_Position = projectionMatrix * mvPosition;`;
     bakeWhole(g);
     for (const o of lift) g.attach(o);
   }
+  // A finished building's still parts never move: their matrices made once, not recomposed by three every frame (a town
+  // is hundreds of them). Its moving parts (bakeStill's live ones, a horse) keep updating, under their frozen parents.
+  const LIVE_PARTS = new Set(['flag', 'sails', 'pennant', 'portcullis', 'cloth', 'plate', 'hoist', 'anim']);
+  function freezeStill(g){
+    const f = o => { if (LIVE_PARTS.has(o.name) || o.children.some(c => c.name === 'horseNeck')) return;
+      o.matrixAutoUpdate = false; o.updateMatrix(); o.children.forEach(f); };
+    f(g); g.updateMatrixWorld(true);
+  }
   function bakeWhole(g){
     const baked = bakePose(g, true);
     g.traverse(o => { if (o !== g && o.geometry && o.geometry.userData.own && !o.geometry.userData.kept) o.geometry.dispose(); });
@@ -4415,7 +4440,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       MODELS[e.btype](g, hurt ? { ...e, openTop: true } : e); g.userData.bid = e.id; // (the world view's click picks it by this; a damaged one open under its roof)
       footPlate(g, e);
       addHulls(g);
-      if (e.complete && !hurt) { bakeStill(g); const c = centerOf(e); levelGeo(g, c.x, c.y); }   // (a site, or a damaged one, stays in parts: constructionSite reads each wall's depth)
+      if (e.complete && !hurt) { bakeStill(g); const c = centerOf(e); levelGeo(g, c.x, c.y); freezeStill(g); }   // (a site, or a damaged one, stays in parts: constructionSite reads each wall's depth)
       scene.add(g);
       const flags = [], horses = [];
       g.traverse(o => {
@@ -4922,11 +4947,10 @@ gl_Position = projectionMatrix * mvPosition;`;
     const t = aTick * 0.13;
     for (const rec of solids.values()) {
       if (rec.sails) rec.sails.rotation.z += dt * 0.9;
-      if (rec.cloths && rec.cloths.length && rec.obj.visible && !rec.site && !rec.dmg) for (const c of rec.cloths) blowCloth(c);   // (the wind in the awnings and tents)
       if (rec.smoke && !rec.site && !rec.dmg && rec.obj.visible && (rec.smokeT = (rec.smokeT || Math.random()) - dt) <= 0) { // chimney smoke (the 2D's drawChimneySmoke)
         rec.smokeT = 0.55 + Math.random() * 0.3; for (const [x, y, z] of rec.smoke) chimneyPuff(x, y, z); }
       if (rec.hoists && rec.obj.visible && !rec.site && !rec.dmg) for (const h of rec.hoists) { const L = hoistLength(h.userData, aTick);   // (the lumber camp's log, up and down)
-        h.getObjectByName('hoistRope').scale.y = L; h.getObjectByName('hoistLog').position.y = -L; }
+        namedPart(h, 'hoistRope').scale.y = L; namedPart(h, 'hoistLog').position.y = -L; }
       if (rec.anims && rec.anims.length && rec.obj.visible && !rec.site && !rec.dmg) for (const o of rec.anims) o.userData.anim(o, aTick);   // (the mining camp's wheel, bucket and fire)
       if (rec.pennants) for (const p of rec.pennants) p.rotation.y = 0.35 * Math.sin(t * 0.9 + p.userData.phase) + 0.12 * Math.sin(t * 2.3 + p.userData.phase * 2); // (swinging in the wind)
       if (rec.site) { const be = entitiesById.get(rec.siteOf); if (be) rec.site.set((be.buildProgress || 0) / be.buildTime); }
@@ -5259,7 +5283,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       if (u >= 1) { puffBurst(f.b[0], f.b[1], f.b[2], 5); scene.remove(f.obj); flying.splice(i, 1); }
     }
   }
-  // Place and pose one villager; false when it has no 3D pose yet (it shows as art this frame).
+  // Place and pose one person or machine; false when its rig isn't built yet (it shows once it is).
   function updateVillager3D(e, dt){
     const now = performance.now();
     let [tx, tz] = posOf(e), ty = -worldFacing(e);
@@ -5344,7 +5368,14 @@ gl_Position = projectionMatrix * mvPosition;`;
     // crouched as it slid in, stood to walk the rest, and crouched again)
     const mv = isDrawnMoving(e), gliding = (tx - (e.x + 0.5)) ** 2 + (tz - (e.y + 0.5)) ** 2 > 1e-6, far = (tx - v.x) ** 2 + (tz - v.z) ** 2 > 4;
     let nx, nz;
-    if (far || ((mv || gliding) && !T)) { nx = tx; nz = tz;
+    if (T && mv && !e.path.length && !v.throw && e.utype === 'villager' && !far) {
+      // pressing into its work spot (the sim's walk-in, a step a tick): drawn on its true, interpolated spot, walking and
+      // facing its slide; the last sidestep onto the work spot comes once it stands (below). Aimed at the work spot instead
+      // — re-aimed every tick from the stepping spot — it went in a jerk a tick, crouched.
+      nx = rx; nz = rz; const d = Math.hypot(nx - v.x, nz - v.z), wk = p.opt && p.opt.load ? 'carry' : 'walk';
+      if (d > 1e-5) ty = -Math.atan2(nz - v.z, nx - v.x);
+      v.stride += d; p = { kind: wk, t: ((v.stride / WALK_TILES[wk]) % 1 + 1) % 1, opt: p.opt };
+    } else if (far || ((mv || gliding) && !T)) { nx = tx; nz = tz;
       // leaving a work spot on the move: the step-in offset walks off (at WALK_IN, game-speed scaled), never pops. The
       // offset is from where the unit truly stood LAST frame (v.prx): measured from its new spot, a rider's own run counted
       // as offset, outran WALK_IN and dragged the drawing behind until it snapped 2 tiles
@@ -5855,21 +5886,22 @@ gl_Position = projectionMatrix * mvPosition;`;
       _sp.center.set(v.x, 0.6, v.z); r.visible = _fr.intersectsSphere(_sp); }
   }
   const _uFr = {}, drawnUnits = new Set();   // (drawnUnits: this frame's modelled units — the overlay's HP bars follow them)
-  // The dragon's model is the one costly animal to make (a frame's worth), and it is made again each time its colour
-  // changes — taken for a ride, the ride over — or it comes back into view. So a dragon model let go is KEPT, hidden,
-  // by its key (kind + colour), and the next dragon of that key takes it; a match's start makes the wild one's and the
-  // player's own ahead of time (prewarmDragon).
-  const keptModels = new Map();
+  // An animal's model is costly to make (modelled, outlined, baked: the dragon a frame's worth), and every animal
+  // leaving the camera's range and coming back — all through a pan — was made again. So a model let go is KEPT, hidden,
+  // by its key (kind + colour), a few a key, and the next animal of that key takes it; a match's start makes the wild
+  // dragon's and the player's own ahead of time (prewarmDragon). (Never one that died: a death pose stays in its parts.)
+  const keptModels = new Map(), KEPT_PER_KEY = 6;
+  const keptTake = key => { const L = keptModels.get(key); return L && L.length ? L.pop() : null; };
   function animalBuild(utype, tc){ const g = animalModel(utype, tc); addHulls(g, true); bakeRigid(g, utype === 'sheep' ? SHEEP_LOOSE : null); scene.add(g); return g; }
   function dropAnimal(a){
     if (a.obj) quenchDragonFire(a.obj);
-    if (a.obj && a.key.startsWith('dragon') && !keptModels.has(a.key)) { a.obj.visible = false; keptModels.set(a.key, a.obj); return; }
+    if (a.obj && !a.deadAt) { const L = keptModels.get(a.key) || []; if (L.length < (a.key.startsWith('dragon') ? 1 : KEPT_PER_KEY)) { a.obj.visible = false; L.push(a.obj); keptModels.set(a.key, L); return; } }
     dropSolid(a);
   }
   function prewarmDragon(){
     if (!entities.some(e => e.utype === 'dragon')) return;
-    for (const t of [GAIA_TEAM, myTeam]) { const key = 'dragon' + teamColor(t); if (keptModels.has(key) || [...animals.values()].some(a => a.key === key)) continue;
-      const g = animalBuild('dragon', teamColor(t)); g.visible = false; keptModels.set(key, g);
+    for (const t of [GAIA_TEAM, myTeam]) { const key = 'dragon' + teamColor(t); if ((keptModels.get(key) || []).length || [...animals.values()].some(a => a.key === key)) continue;
+      const g = animalBuild('dragon', teamColor(t)); g.visible = false; keptModels.set(key, [g]);
       warmCompile(g).catch(() => {}); }
   }
   function updateUnits(){
@@ -5879,8 +5911,8 @@ gl_Position = projectionMatrix * mvPosition;`;
     for (const e of entities) {
       if (e.type !== 'unit') continue;
       if (e.id === followId && eyeView() && !(RIG_UNITS(e.utype) && (e.utype === 'villager' || MIL3D.has(e.utype)))) { // seen through its eyes: a rigged person shows its arms and tool (fp); anything else (an animal too) nothing
-        const a = animals.get(e.id), rs = unitSprites.get(e.id);              // (HIDDEN, not just left un-updated: a sheep's own body sat
-        if (a) a.obj.visible = false; if (rs) rs.sprite.visible = false;      // over the camera, bobbing with every step)
+        const a = animals.get(e.id);                                            // (HIDDEN, not just left un-updated: a sheep's own body sat
+        if (a) a.obj.visible = false;                                           // over the camera, bobbing with every step)
         continue;
       }
       const dx = e.x + 0.5 - camAt.x, dy = e.y + 0.5 - camAt.y, d2 = dx * dx + dy * dy;
@@ -5917,7 +5949,7 @@ gl_Position = projectionMatrix * mvPosition;`;
         // a rebuild (its colour changed: a slain sheep's tuft goes to nobody's white) keeps its life — else a sheep seen
         // alive came back already lying, its fall skipped
         let life = null; if (a && a.key !== key) { life = { alive: a.alive, deadAt: a.deadAt }; dropAnimal(a); a = null; }
-        if (!a) { const g = keptModels.get(key) || animalBuild(e.utype, teamColor(e.team)); keptModels.delete(key); g.visible = true; animals.set(e.id, a = { obj: g, key, x: tx, z: tz, yaw: ty, phase: 0, gait: 0, graze: 0, ...life }); }
+        if (!a) { const g = keptTake(key) || animalBuild(e.utype, teamColor(e.team)); g.visible = true; animals.set(e.id, a = { obj: g, key, x: tx, z: tz, yaw: ty, phase: 0, gait: 0, graze: 0, ...life }); }
         // Glide between sim steps and ease into turns (a jump of 2+ tiles snaps).
         const nx = tx, nz = tz; // interpolated (posOf): no chase lag
         const mvx = nx - a.x, mvz = nz - a.z; a.moved = Math.hypot(mvx, mvz); a.x = nx; a.z = nz;
@@ -5941,32 +5973,10 @@ gl_Position = projectionMatrix * mvPosition;`;
         else { a.alive = true; animateAnimal(a.obj, e, a, dt); }
         continue;
       }
-      if ((e.utype === 'villager' || MIL3D.has(e.utype)) && updateVillager3D(e, dt)) { const rs = unitSprites.get(e.id); if (rs) rs.sprite.visible = false; continue; }
-      let rec = unitSprites.get(e.id);
-      if (rec) rec.sprite.visible = true;
-      // Close up a unit fills much of the screen: paint it sharper (hysteresis
-      // so one at the edge doesn't flip resolution every frame).
-      const want = d2 < 16 ? SS_NEAR : d2 > 25 ? SS : rec ? rec.ctx._ss : SS;
-      if (rec && rec.ctx._ss !== want) {
-        rec.tex.dispose();
-        Object.assign(rec, canvasTex(UNIT_BUF, UNIT_BUF, want));
-        rec.sprite.material.map = rec.tex; rec.sprite.material.needsUpdate = true; rec.fresh = true;
-      }
-      if (!rec) {
-        rec = canvasTex(UNIT_BUF, UNIT_BUF, want);
-        rec.sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: rec.tex, alphaTest: 0.5 }));
-        rec.sprite.center.set(0.5, 1 - UNIT_ANCHOR_Y / UNIT_BUF);
-        rec.sprite.scale.set(UNIT_BUF / PX, UNIT_BUF / PX, 1);
-        scene.add(rec.sprite); unitSprites.set(e.id, rec);
-        rec.fresh = true;
-      }
-      const [sx_, sz_] = posOf(e); rec.sprite.position.set(sx_, 0, sz_);
-      if (rec.fresh || (frame + e.id) % 2 === 0) { paintUnit(rec, e); rec.fresh = false; } // ~30fps art refresh
+      // every unit is a 3D model (a person's rig, a machine's, an animal's): one whose rig isn't built yet shows once it is
+      if (e.utype === 'villager' || MIL3D.has(e.utype)) updateVillager3D(e, dt);
     }
-    for (const [id, rec] of unitSprites) if (!used.has(id)) {
-      scene.remove(rec.sprite); rec.tex.dispose(); rec.sprite.material.dispose(); unitSprites.delete(id);
-    }
-    SU.mesh.count = SU.n; SU.mesh.instanceMatrix.needsUpdate = true;
+    SU.mesh.count = SU.n; sendInst(SU.mesh, SU.n);
     for (const [id, a] of animals) if (!used.has(id)) { dropAnimal(a); animals.delete(id); }
     for (const m of burning) { const F = m.userData.fire; if (F.seen !== fireFrame) dragonFire(m, null, 0, fxDt); if (!F.puffs.length) burning.delete(m); }
     fireFrame++;
@@ -5975,38 +5985,6 @@ gl_Position = projectionMatrix * mvPosition;`;
     updateCorpses(used);
   }
 
-  // Draw a unit with the rig direction that shows its facing as seen from the
-  // camera: the iso view looks along world (-1,-1), i.e. 5π/4.
-  function paintUnit(rec, e){
-    const view = Math.atan2(e.y + 0.5 - camAt.y, e.x + 0.5 - camAt.x);
-    const a = (worldFacing(e) - view + 5 * Math.PI / 4) / (Math.PI / 4); // in 45° sectors
-    // Sticky: switch sprite direction only once clearly past a sector edge, or
-    // a unit near a 45° boundary strobes as the camera turns.
-    const off = rec.d === undefined ? 9 : (((a - rec.d) % 8) + 12) % 8 - 4;
-    if (Math.abs(off) > 0.7) rec.d = ((Math.round(a) % 8) + 8) % 8;
-    const d = rec.d;
-    const keep = { dir: e.dir, facing: e.facing, facingNorth: e.facingNorth, lastX: e.lastX, lastY: e.lastY };
-    clearCtx(rec.ctx);
-    const { ox, oy } = getUnitGroupOffset(e.id);
-    try {
-      e.dir = d; setFacingFromDir(e, d);
-      // The rig now faces RIG_DIRV[d] instead of the unit's real heading; turn
-      // its attack aim by the same angle so swings and shots follow the body.
-      window._povAimRot = Math.atan2(RIG_DIRV[d][1], RIG_DIRV[d][0]) - worldFacing(e);
-      drawInto(rec.ctx, e.x, e.y, UNIT_BUF / 2 - ox, UNIT_ANCHOR_Y - HALF_TH - oy, () => drawUnit(e));
-    } finally { Object.assign(e, keep); window._povAimRot = 0; }
-    // The art draws feet (hooves most) a few px below the ground point; stand
-    // each type on its lowest painted row, measured once, so none sink.
-    let low = footRow.get(e.utype);
-    if (low === undefined) {
-      const { width: W, height: H } = rec.cv, d = rec.ctx.getImageData(0, 0, W, H).data;
-      low = UNIT_ANCHOR_Y;
-      for (let y = H - 1; y >= 0 && low === UNIT_ANCHOR_Y; y--) for (let x = 0; x < W; x++) if (d[(y * W + x) * 4 + 3] > 128) { low = Math.max(UNIT_ANCHOR_Y, (y + 1) / rec.ctx._ss); break; }
-      footRow.set(e.utype, low);
-    }
-    rec.sprite.center.y = 1 - low / UNIT_BUF;
-    rec.tex.needsUpdate = true;
-  }
 
   let camDt = 1 / 60, fpDimmed = false;
   function follow(e){
@@ -6437,7 +6415,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     visibleMeshes(obj, m => _bb.expandByObject(m, false)); return _bb; }
   // Where a unit is drawn (its model / billboard), else its interpolated spot.
   function drawnAt(u){ const m = solidModel(u); if (m) { modelBox(m).getCenter(_bc); return [_bc.x, _bc.z]; }
-    const a = villagers.get(u.id) || animals.get(u.id); if (a) return [a.x, a.z]; const s = unitSprites.get(u.id); return s ? [s.sprite.position.x, s.sprite.position.z] : posOf(u); }
+    const a = villagers.get(u.id) || animals.get(u.id); return a ? [a.x, a.z] : posOf(u); }
   // Its box on screen {x0, x1, y0, y1} (null: behind the camera).
   function screenRect(u, x, z){
     const m = solidModel(u);
@@ -6666,7 +6644,7 @@ gl_Position = projectionMatrix * mvPosition;`;
         // (never under MARK_PX on screen: far off it stays a sign, close up it is a thing of the world)
         const sz = Math.max(s0, MARK_PX * 2 * Math.hypot(cp.x - x, cp.y - y, cp.z - z) * Math.tan(camera.fov * Math.PI / 360) / Math.max(1, renderer.domElement.clientHeight));
         M.m.setMatrixAt(i, _m.compose(_p.set(x, y + bob, z), _q.setFromAxisAngle(_s.set(0, 1, 0), Math.atan2(cp.x - x, cp.z - z)), _s.set(sz, sz, sz))); }
-      M.m.count = M.h.count = n; M.m.instanceMatrix.needsUpdate = true; }
+      M.m.count = M.h.count = n; sendInst(M.m, n); }
   }
   function drawOverlay(){
     ensureOverlay(); _v3 = _v3 || new THREE.Vector3();
@@ -7107,11 +7085,9 @@ gl_Position = projectionMatrix * mvPosition;`;
   // Every per-entity model and its viewer state, keyed by id: a new world reuses ids, so a kept entry would dress the
   // new entity in the old one's model, team and pose.
   function dropUnits(){
-    for (const rec of unitSprites.values()) { scene.remove(rec.sprite); rec.tex.dispose(); rec.sprite.material.dispose(); }
-    unitSprites.clear();
     for (const a of animals.values()) dropSolid(a);
     animals.clear();
-    for (const g of keptModels.values()) dropSolid({ obj: g });
+    for (const L of keptModels.values()) for (const g of L) dropSolid({ obj: g });
     keptModels.clear();
     for (const v of villagers.values()) dropVillager(v);
     villagers.clear();
@@ -7209,14 +7185,14 @@ gl_Position = projectionMatrix * mvPosition;`;
   // dev: the frame's drawables (meshes and line sets in view of the scene graph — visible, not yet frustum-culled) by kind
   window.__povDraws = () => { const n = o => { let k = 0; if (o && o.visible) o.traverseVisible(c => { if ((c.isMesh || c.isLineSegments || c.isSprite) && c.layers.test(camera.layers)) k++; }); return k; };
     const sum = it => { let k = 0; for (const r of it) k += n(r.obj || r.sprite || r); return k; };
-    const known = new Set(); for (const m of [solids, villagers, animals, unitSprites, corpseModels]) for (const r of m.values()) known.add(r.obj || r.sprite || r); known.add(xray); known.add(selG);
+    const known = new Set(); for (const m of [solids, villagers, animals, corpseModels]) for (const r of m.values()) known.add(r.obj || r.sprite || r); known.add(xray); known.add(selG);
     const rest = {}; for (const c of scene.children) { if (known.has(c)) continue; const k = n(c); if (!k) continue; const M = [].concat(c.material || [])[0];
       const key = c.name || (c.isInstancedMesh ? 'inst' : c.isSprite ? 'sprite' : c.isLineSegments ? 'lines' : c.isMesh ? 'mesh:' + (M.map ? 'map' : M.type.replace('Material', '')) + (c.isSkinnedMesh ? ':skin' : '') + ':' + c.geometry.type.replace('Geometry', '') + (M.color ? '#' + M.color.getHexString() : '') + ':' + Object.keys(c.userData).join('.') : c.type + ':' + Object.keys(c.userData).join('.') + ':' + c.children.length); rest[key] = (rest[key] || 0) + k; }
-    return { rest, buildings: sum(solids.values()), people: sum(villagers.values()), animals: sum(animals.values()), sprites: sum(unitSprites.values()), corpses: sum(corpseModels.values()), xray: n(xray), selection: n(selG), all: n(scene) }; };
+    return { rest, buildings: sum(solids.values()), people: sum(villagers.values()), animals: sum(animals.values()), corpses: sum(corpseModels.values()), xray: n(xray), selection: n(selG), all: n(scene) }; };
   window.__povMem = () => { const sz = m => { let b = 0; for (const v of m.values()) { if (v && v.m) b += v.m.byteLength || 0; } return b; };
     let tv = 0; for (const T of rigTemplates.values()) tv += T.verts || 0; let cv = 0; for (const c of vilCache.values()) cv += c.verts || 0;
     return { rigSamples: rigSamples.size, rigSampleMB: +(sz(rigSamples) / 1048576).toFixed(1), rigTemplates: rigTemplates.size, templateVertsK: Math.round(tv / 1000), vilCache: vilCache.size, vilCacheVertsK: Math.round(cv / 1000),
-      tickPos: tickPos.size, heading: heading.size, lastPh: lastPh.size, farmPrev: farmPrev.size, legMaps: legMaps.size, mats: mats.size, blobGeos: blobGeos.size, painted: painted.size, unitSprites: unitSprites.size, villagers: villagers.size }; }; // dev: cache sizes
-  window.povStats = () => ({ frames: frame, jsMs: +stats.js.toFixed(2), glMs: +stats.gl.toFixed(2), units: unitSprites.size + villagers.size, animals: animals.size, buildings: solids.size, arrows: feat.shaft ? feat.shaft.n : 0, shadows: feat.shadow ? feat.shadow.mesh.count : 0, calls: renderer ? renderer.info.render.calls : 0, tris: renderer ? renderer.info.render.triangles : 0,
+      tickPos: tickPos.size, heading: heading.size, lastPh: lastPh.size, farmPrev: farmPrev.size, legMaps: legMaps.size, mats: mats.size, blobGeos: blobGeos.size, painted: painted.size, villagers: villagers.size }; }; // dev: cache sizes
+  window.povStats = () => ({ frames: frame, jsMs: +stats.js.toFixed(2), glMs: +stats.gl.toFixed(2), units: villagers.size, animals: animals.size, buildings: solids.size, arrows: feat.shaft ? feat.shaft.n : 0, shadows: feat.shadow ? feat.shadow.mesh.count : 0, calls: renderer ? renderer.info.render.calls : 0, tris: renderer ? renderer.info.render.triangles : 0,
     programs: renderer ? renderer.info.programs.length : 0, geos: renderer ? renderer.info.memory.geometries : 0, tex: renderer ? renderer.info.memory.textures : 0 });   // (programs / geos / tex rising in a slow frame: what it was building)
 })();
